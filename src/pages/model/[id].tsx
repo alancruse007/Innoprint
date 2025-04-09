@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, useMemo } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, useGLTF, Environment, Stage } from '@react-three/drei';
+import { OrbitControls, useGLTF, Environment, Stage, Html, Loader } from '@react-three/drei';
+import * as THREE from 'three';
 
 // Mock data for model details
 const MOCK_MODELS = {
@@ -48,41 +49,110 @@ const MOCK_MODELS = {
   }
 };
 
-// 3D Model component
+// 3D Model component with error handling
 function Model({ url }: { url: string }) {
+  const [modelError, setModelError] = useState(false);
+  
+  // Create a fallback component for error states
+  const ErrorFallback = () => (
+    <mesh>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshStandardMaterial color="red" />
+      <Html position={[0, 0, 0]}>
+        <div style={{ color: 'white', background: 'rgba(0,0,0,0.7)', padding: '10px', width: '200px', textAlign: 'center' }}>
+          Loading model...
+        </div>
+      </Html>
+    </mesh>
+  );
+
+  // Verify model URL before loading
+  useEffect(() => {
+    // Check if URL is valid
+    if (!url || typeof url !== 'string' || !url.endsWith('.glb')) {
+      console.error('Invalid model URL:', url);
+      setModelError(true);
+    }
+  }, [url]);
+
+  // If model URL is invalid, show error
+  if (modelError) {
+    return (
+      <mesh>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="red" />
+        <Html position={[0, 0, 0]}>
+          <div style={{ color: 'white', background: 'rgba(0,0,0,0.7)', padding: '10px', width: '200px', textAlign: 'center' }}>
+            Invalid model URL: {url ? url.split('/').pop() : 'undefined'}
+          </div>
+        </Html>
+      </mesh>
+    );
+  }
+
+  // Use a safer approach with Suspense
+  return (
+    <Suspense fallback={<ErrorFallback />}>
+      <ModelLoader url={url} setModelError={setModelError} />
+    </Suspense>
+  );
+}
+
+// Separate component to handle the actual model loading
+function ModelLoader({ url, setModelError }: { url: string, setModelError: (error: boolean) => void }) {
   // Set the decoder path for Draco compression
   useGLTF.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.5/');
   
-  // Use error boundary pattern with useState and useEffect
-  const [modelState, setModelState] = useState<{ scene: any, error: string | null }>({ 
-    scene: null, 
-    error: null 
-  });
-  
+  // Preload the model
   useEffect(() => {
-    // Preload the model to ensure proper loading
     try {
-      // Use a direct import with binary flag to ensure proper loading
-      const gltf = useGLTF(url, true);
-      setModelState({ scene: gltf.scene, error: null });
-    } catch (err) {
-      console.error('Error loading model:', err);
-      setModelState({ scene: null, error: 'Failed to load 3D model' });
+      // Preload with binary flag
+      useGLTF.preload(url, true);
+    } catch (error) {
+      console.error('Error preloading model:', error);
     }
     
-    // Clean up function
+    // Cleanup
     return () => {
-      useGLTF.clear(url);
+      try {
+        useGLTF.clear(url);
+      } catch (error) {
+        console.error('Error clearing model cache:', error);
+      }
     };
   }, [url]);
   
-  // Show nothing if there's an error or model is still loading
-  if (modelState.error || !modelState.scene) {
-    return null;
+  // Use try-catch to handle loading errors
+  try {
+    // Load the model with binary flag
+    const { scene } = useGLTF(url, true);
+    
+    // Clone the scene to avoid issues with reusing the same object
+    const clonedScene = useMemo(() => {
+      return scene ? THREE.Object3D.prototype.clone.call(scene) : null;
+    }, [scene]);
+    
+    if (!clonedScene) {
+      throw new Error('Failed to clone scene');
+    }
+    
+    return <primitive object={clonedScene} scale={1.5} />;
+  } catch (error) {
+    console.error('Error loading model:', error);
+    // Report error back to parent component
+    setModelError(true);
+    return (
+      <mesh>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="red" />
+        <Html position={[0, 0, 0]}>
+          <div style={{ color: 'white', background: 'rgba(0,0,0,0.7)', padding: '10px', width: '200px', textAlign: 'center' }}>
+            Error loading model: {url.split('/').pop()}
+          </div>
+        </Html>
+      </mesh>
+    );
   }
-  
-  // Render the model if loaded successfully
-  return <primitive object={modelState.scene} scale={1.5} />;
 }
 
 const ModelPreview = () => {
