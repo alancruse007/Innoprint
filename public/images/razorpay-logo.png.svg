@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Razorpay logo - simplified version -->
+  <rect x="0" y="0" width="200" height="200" fill="#ffffff" rx="10" ry="10"/>
+  <g transform="translate(20, 70) scale(1.6)">
+    <!-- Blue lightning bolt shape -->
+    <path d="M 0,0 L 25,0 L 15,15 L 40,15 L 15,40 L 20,20 L 0,20 Z" fill="#2d89ef"/>
+    <!-- Text representation -->
+    <text x="45" y="22" font-family="Arial, sans-serif" font-weight="bold" font-size="16" fill="#072654">Razorpay</text>
+  </g>
+</svg>

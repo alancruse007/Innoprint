@@ -50,7 +50,7 @@ const MOCK_MODELS = {
 };
 
 // 3D Model component with error handling
-function Model({ url }: { url: string }) {
+function Model({ url, modelId }: { url: string, modelId: string }) {
   const [modelError, setModelError] = useState(false);
   
   // Create a fallback component for error states
@@ -65,6 +65,11 @@ function Model({ url }: { url: string }) {
       </Html>
     </mesh>
   );
+
+  // Reset error state when model ID changes
+  useEffect(() => {
+    setModelError(false);
+  }, [modelId]);
 
   // Verify model URL before loading
   useEffect(() => {
@@ -93,39 +98,69 @@ function Model({ url }: { url: string }) {
   // Use a safer approach with Suspense
   return (
     <Suspense fallback={<ErrorFallback />}>
-      <ModelLoader url={url} setModelError={setModelError} />
+      <ModelLoader url={url} modelId={modelId} setModelError={setModelError} />
     </Suspense>
   );
 }
 
 // Separate component to handle the actual model loading
-function ModelLoader({ url, setModelError }: { url: string, setModelError: (error: boolean) => void }) {
+function ModelLoader({ url, modelId, setModelError }: { url: string, modelId: string, setModelError: (error: boolean) => void }) {
   // Set the decoder path for Draco compression
   useGLTF.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.5/');
+  
+  // Log the URL being loaded
+  console.log('Attempting to load model from URL:', url);
+  
+  // Validate URL before proceeding
+  if (!url || typeof url !== 'string') {
+    console.error('Invalid model URL provided to ModelLoader:', url);
+    setModelError(true);
+    return (
+      <mesh>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="red" />
+        <Html position={[0, 0, 0]}>
+          <div style={{ color: 'white', background: 'rgba(0,0,0,0.7)', padding: '10px', width: '200px', textAlign: 'center' }}>
+            Invalid model URL provided
+          </div>
+        </Html>
+      </mesh>
+    );
+  }
   
   // Preload the model
   useEffect(() => {
     try {
+      // Clear any previously loaded models first
+      useGLTF.clear(url);
+      
       // Preload with binary flag
+      console.log('Preloading model:', url, 'for model ID:', modelId);
       useGLTF.preload(url, true);
     } catch (error) {
       console.error('Error preloading model:', error);
+      setModelError(true);
     }
     
     // Cleanup
     return () => {
       try {
+        console.log('Clearing model cache for:', url);
         useGLTF.clear(url);
       } catch (error) {
         console.error('Error clearing model cache:', error);
       }
     };
-  }, [url]);
+  }, [url, modelId, setModelError]); // Add modelId as dependency to ensure reloading
   
   // Use try-catch to handle loading errors
   try {
     // Load the model with binary flag
+    console.log('Loading model with GLTF:', url);
     const { scene } = useGLTF(url, true);
+    
+    // Log successful scene loading
+    console.log('Model scene loaded successfully:', scene ? 'Scene loaded' : 'No scene');
     
     // Clone the scene to avoid issues with reusing the same object
     const clonedScene = useMemo(() => {
@@ -133,12 +168,13 @@ function ModelLoader({ url, setModelError }: { url: string, setModelError: (erro
     }, [scene]);
     
     if (!clonedScene) {
+      console.error('Failed to clone scene for model:', url);
       throw new Error('Failed to clone scene');
     }
     
     return <primitive object={clonedScene} scale={1.5} />;
   } catch (error) {
-    console.error('Error loading model:', error);
+    console.error('Error loading model:', error, 'URL:', url);
     // Report error back to parent component
     setModelError(true);
     return (
@@ -162,15 +198,39 @@ const ModelPreview = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
+  // This key will force the component to remount when the ID changes
+  const componentKey = useMemo(() => `model-${id}`, [id]);
+  
   useEffect(() => {
+    // Reset state when ID changes
+    setLoading(true);
+    setError('');
+    setModel(null);
+    
     if (id) {
       // In a real app, fetch model data from API
       // For now, use mock data
-      const modelData = MOCK_MODELS[id as string];
-      if (modelData) {
+      console.log('Current model ID:', id);
+      const modelId = id as string;
+      
+      // Clear any previously loaded models to prevent caching issues
+      Object.keys(MOCK_MODELS).forEach(key => {
+        const modelUrl = MOCK_MODELS[key].fileUrl;
+        try {
+          useGLTF.clear(modelUrl);
+        } catch (error) {
+          console.error('Error clearing model cache:', error);
+        }
+      });
+      
+      // Check if the model ID exists in our mock data
+      if (Object.prototype.hasOwnProperty.call(MOCK_MODELS, modelId)) {
+        const modelData = MOCK_MODELS[modelId];
+        console.log('Loading model data for ID:', modelId, modelData);
         setModel(modelData);
       } else {
-        setError('Model not found');
+        console.error('Model not found for ID:', modelId);
+        setError(`Model not found for ID: ${modelId}`);
       }
       setLoading(false);
     }
@@ -204,12 +264,13 @@ const ModelPreview = () => {
           {/* 3D Model Viewer */}
           <div className="bg-white rounded-lg shadow-md overflow-hidden border border-blue-100">
             <div className="h-[500px] w-full">
-              <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
+              {/* Use the componentKey to force re-render when model changes */}
+              <Canvas key={`canvas-${model.id}`} camera={{ position: [0, 0, 5], fov: 45 }}>
                 <ambientLight intensity={0.5} />
                 <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} />
                 <pointLight position={[-10, -10, -10]} />
                 <Stage environment="city" intensity={0.6}>
-                  <Model url={model.fileUrl} />
+                  <Model url={model.fileUrl} modelId={id as string} />
                 </Stage>
                 <OrbitControls autoRotate />
               </Canvas>

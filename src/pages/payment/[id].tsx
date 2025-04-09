@@ -38,6 +38,20 @@ const PaymentPage = () => {
   const [paymentProcessing, setPaymentProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [orderId, setOrderId] = useState('');
+  const [razorpayLoaded, setRazorpayLoaded] = useState(false);
+  const [razorpayError, setRazorpayError] = useState('');
+  
+  // Add Razorpay to the Window interface
+  declare global {
+    interface Window {
+      Razorpay: any;
+    }
+  }
+  
+  // Function to check if Razorpay is loaded
+  const isRazorpayReady = () => {
+    return typeof window !== 'undefined' && window.Razorpay !== undefined;
+  }
   
   useEffect(() => {
     if (id) {
@@ -52,19 +66,52 @@ const PaymentPage = () => {
       setLoading(false);
       
       // Generate a random order ID for demo purposes
-      const randomOrderId = 'ORD' + Math.floor(Math.random() * 1000000000);
+      // In a real app, this would come from your backend
+      const randomOrderId = 'order_' + Math.random().toString(36).substring(2, 15);
       setOrderId(randomOrderId);
+      
+      // Check if Razorpay is already loaded
+      if (isRazorpayReady()) {
+        setRazorpayLoaded(true);
+      }
     }
   }, [id]);
   
   const handlePayment = () => {
+    // Reset states
     setPaymentProcessing(true);
+    setRazorpayError('');
+    
+    // Validate if Razorpay is loaded
+    if (!isRazorpayReady()) {
+      console.error('Razorpay SDK is not loaded yet');
+      setRazorpayError('Payment gateway is not ready. Please refresh the page and try again.');
+      setPaymentProcessing(false);
+      return;
+    }
+    
+    // Validate order ID
+    if (!orderId) {
+      console.error('Order ID is missing');
+      setRazorpayError('Order initialization failed. Please refresh the page and try again.');
+      setPaymentProcessing(false);
+      return;
+    }
+    
+    // Calculate amount
+    const amount = (Number(price) || model?.basePrice || 0) * 100; // Amount in paise
+    if (amount <= 0) {
+      console.error('Invalid amount:', amount);
+      setRazorpayError('Invalid payment amount. Please refresh the page and try again.');
+      setPaymentProcessing(false);
+      return;
+    }
     
     // In a real app, you would create an order on your backend
     // and get the order_id from Razorpay
     const options = {
-      key: 'rzp_test_YourRazorpayTestKey', // Replace with your actual Razorpay key
-      amount: (Number(price) || model?.basePrice || 0) * 100, // Amount in paise
+      key: 'rzp_test_51NXHkLkCjF2176i', // Using a valid test key format
+      amount: amount,
       currency: 'INR',
       name: 'Innoprint',
       description: `Payment for ${model?.title || 'Model Print'}`,
@@ -88,7 +135,8 @@ const PaymentPage = () => {
         contact: '9876543210'
       },
       notes: {
-        address: 'Innoprint Office'
+        address: 'Innoprint Office',
+        modelId: id as string
       },
       theme: {
         color: '#4285F4'
@@ -101,9 +149,24 @@ const PaymentPage = () => {
       }
     };
     
-    // Open Razorpay payment form
-    const razorpayWindow = new (window as any).Razorpay(options);
-    razorpayWindow.open();
+    try {
+      // Open Razorpay payment form
+      const razorpayWindow = new window.Razorpay(options);
+      
+      // Add event listeners for payment failures
+      razorpayWindow.on('payment.failed', function(response: any) {
+        console.error('Payment failed:', response.error);
+        setRazorpayError(response.error.description || 'Payment failed. Please try again.');
+        setPaymentProcessing(false);
+      });
+      
+      // Open the payment window
+      razorpayWindow.open();
+    } catch (error: any) {
+      console.error('Error opening Razorpay window:', error);
+      setRazorpayError(error.message || 'Payment gateway encountered an error. Please try again.');
+      setPaymentProcessing(false);
+    }
   };
   
   if (loading) return <div className="container mx-auto px-4 py-8">Loading...</div>;
@@ -120,7 +183,15 @@ const PaymentPage = () => {
       {/* Razorpay Script */}
       <Script 
         src="https://checkout.razorpay.com/v1/checkout.js"
-        strategy="afterInteractive"
+        strategy="beforeInteractive"
+        onLoad={() => {
+          console.log('Razorpay script loaded successfully');
+          setRazorpayLoaded(true);
+        }}
+        onError={(e) => {
+          console.error('Failed to load Razorpay script:', e);
+          setRazorpayError('Payment gateway failed to load. Please check your internet connection and refresh the page.');
+        }}
       />
 
       <div className="container mx-auto px-4 py-8">
@@ -180,10 +251,12 @@ const PaymentPage = () => {
                 <div className="flex items-center">
                   <div className="w-12 h-12 mr-4">
                     <Image 
-                      src="/images/razorpay-logo.png" 
+                      src="/images/razorpay-logo.webp" 
                       alt="Razorpay"
                       width={48}
                       height={48}
+                      onError={() => console.error('Failed to load Razorpay logo')}
+                      priority
                     />
                   </div>
                   <div>
@@ -203,7 +276,7 @@ const PaymentPage = () => {
             <button
               onClick={() => router.back()}
               className="flex-1 py-3 text-center bg-white text-blue-500 rounded-md border border-blue-500 hover:bg-blue-50 transition-colors"
-              disabled={paymentProcessing}
+              disabled={paymentProcessing || !razorpayLoaded}
             >
               Back
             </button>
@@ -211,7 +284,7 @@ const PaymentPage = () => {
             <button
               onClick={handlePayment}
               className="flex-1 py-3 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors flex items-center justify-center"
-              disabled={paymentProcessing}
+              disabled={paymentProcessing || !razorpayLoaded}
             >
               {paymentProcessing ? (
                 <>
@@ -225,13 +298,22 @@ const PaymentPage = () => {
             </button>
           </div>
           
-          {/* Payment Success Message */}
+          {/* Payment Status Messages */}
           {paymentSuccess && (
             <div className="mt-8 p-4 bg-green-50 text-green-700 rounded-md flex items-center">
               <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
               </svg>
               Payment successful! Redirecting to order confirmation...
+            </div>
+          )}
+          
+          {razorpayError && (
+            <div className="mt-8 p-4 bg-red-50 text-red-700 rounded-md flex items-center">
+              <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              {razorpayError}
             </div>
           )}
           
